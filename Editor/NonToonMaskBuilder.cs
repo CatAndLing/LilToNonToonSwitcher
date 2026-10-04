@@ -311,6 +311,14 @@ namespace NonToonSwitcher
                 // 现改为直接读 _MainTex（shinano 走"直接沿用原贴图"分支，与 lil 的 fd.col 完全等价）。
                 // ------------------------------------------------------------------
                 Color[] albedoPixels = null;
+                // albedoPixels 的**自身尺寸**必须单独记住：下面生成自发光时会把 width/height 改成
+                // 「发射形状」的尺寸（见 `if (pixels == null) { width = mapWidth; … }`），
+                // 那时若还用新的 width 去索引这张旧尺寸的数组就会 IndexOutOfRangeException。
+                // 实测事故：材质没有任何遮罩源、但有自发光（outer / in / 配饰这类）⇒ pixels == null
+                // ⇒ width/height 被换成发射形状（常常 1×1）⇒ `albedoPixels[y * width + x]` 越界
+                // ⇒ 整个转换流程抛出 IndexOutOfRangeException 中断（用户反馈"无法转换"）。
+                var albedoPixelW = 0;
+                var albedoPixelH = 0;
                 var mainTex = ShaderUtility.HasProperty(lilToonMaterial, "_MainTex")
                     ? lilToonMaterial.GetTexture("_MainTex") as Texture2D
                     : null;
@@ -335,6 +343,14 @@ namespace NonToonSwitcher
                             }
                         }
                         albedoPixels = resampled;
+                        albedoW = width;
+                        albedoH = height;
+                    }
+                    // 记住重采样之后的真实尺寸，供下面按比例取样
+                    if (albedoPixels != null)
+                    {
+                        albedoPixelW = albedoW;
+                        albedoPixelH = albedoH;
                     }
                     if (albedoPixels != null && log != null)
                         log.Mapped("自发光用的 albedo", mainTex.name + " × _Color(" +
@@ -399,9 +415,19 @@ namespace NonToonSwitcher
                                 em = new Vector3(em.x * k, em.y * k, em.z * k);
                             }
                             // 朝"自发光 × 基础色"插值（lil: lerp(emission, emission * albedo, _EmissionMainStrength)）
-                            var albedo = albedoPixels != null
-                                ? albedoPixels[y * width + x]
-                                : Color.white;
+                            // 注意：这里必须按 albedoPixels **自己的尺寸**取样（albedoPixelW/H），
+                            // 不能再用 width/height —— 后者可能已被换成发射形状的尺寸（见上面的说明）。
+                            Color albedo;
+                            if (albedoPixels != null && albedoPixelW > 0 && albedoPixelH > 0)
+                            {
+                                var ay = Mathf.Clamp(y * albedoPixelH / Mathf.Max(height, 1), 0, albedoPixelH - 1);
+                                var ax = Mathf.Clamp(x * albedoPixelW / Mathf.Max(width, 1), 0, albedoPixelW - 1);
+                                albedo = albedoPixels[ay * albedoPixelW + ax];
+                            }
+                            else
+                            {
+                                albedo = Color.white;
+                            }
                             albedo = new Color(albedo.r * mainColor.r, albedo.g * mainColor.g, albedo.b * mainColor.b, 1f);
                             em = new Vector3(
                                 Mathf.Lerp(em.x, em.x * albedo.r, emissionMainStrength),
