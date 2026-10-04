@@ -312,6 +312,22 @@ namespace NonToonSwitcher
                         EditorUtility.SetDirty(material);
                         return true;
                     }
+
+                    // ★ 属性在 m_Ints 里**还没有条目**时必须新建一条，否则这次写入不会落盘。
+                    //
+                    // 实测事故（Atri_face 1 的脸）：`_jp_lilxyzw_nontoon_shade_ShadeGradientIndex` 从未被写过，
+                    // m_Ints 里没有它的条目 ⇒ 上面的循环找不到 ⇒ 直接 return false ⇒ **只有内存值生效、序列化值仍是 -1**
+                    // ⇒ 打开工程后 Shade 模块处于**关闭**状态 ⇒ **烘好的色带完全没被使用**，
+                    // 脸上跑的是 NonToon 原始的 lightColor ⇒ 观感就是「暗的时候不均匀、受灯光影响大」。
+                    // 注意：不能依赖 material.SetInt —— NonToon 的整数属性是 uint，
+                    // Unity 会记 "doesn't have a float or range property" 并忽略，所以只能直接写序列化数据。
+                    ints.InsertArrayElementAtIndex(ints.arraySize);
+                    var added = ints.GetArrayElementAtIndex(ints.arraySize - 1);
+                    added.FindPropertyRelative("first").stringValue = name;
+                    added.FindPropertyRelative("second").intValue = value;
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                    EditorUtility.SetDirty(material);
+                    return true;
                 }
             }
             catch (Exception)
