@@ -754,9 +754,23 @@ namespace NonToonSwitcher
                 // 只有暗端被除小 ⇒ 对比度被夸大近两倍（实测色带线性对比 0.87，而 lilToon 只有 0.33 的量级）。
                 // 放在之后，整条色带（含受光端）一起除 ⇒ 明暗**比值**保持不变、
                 // 整体暗 shadowRatio 倍，由主光补回。
-                if (ratioFaithful && shadowRatio > 1.0001f)
+                // ★ 不再做"整条色带除以 shadowRatio"。
+                //
+                // 为什么撤掉（实测，分组切换的 avatar）：
+                //   逐材质除以各自的 shadowRatio ⇒ 深色材质算出 3.7~6.6 的大倍数、色带被压到接近全黑
+                //   （实测「材质_nontoon」亮度 6.604、色带 0.016→0.020；「acc black」3.766、0.035→0.059），
+                //   而浅色材质（脸 1.195、头发 1.052、身体 1.084）几乎不动、色带仍在 0.65~0.89。
+                //   单看一个材质时自洽，但一旦把它们放进**同一个画面**（多组开关切换正是如此），
+                //   就会出现"同一套 avatar 上亮度倍率差 6.6 倍"⇒ 观感就是**亮度不均匀**。
+                //
+                // 现在的做法（有据可依、不发散）：
+                //   · **亮端固定 1.0**（受光处不被压暗）
+                //   · **暗端 = min(1, 阴影色/平均底色)**：保留 lil 的明暗关系，但绝不把色带整体压暗
+                //   · 若"阴影比底色还亮"（商 > 1）⇒ 暗端被钳到 1 ⇒ 该材质色带全白 = 没有明暗，
+                //     这是可接受的退化：宁可这个材质平一点，也不要它在画面里比别人亮一截。
+                if (ratioFaithful)
                 {
-                    rgb = new Color(rgb.r / shadowRatio, rgb.g / shadowRatio, rgb.b / shadowRatio, 1f);
+                    rgb = new Color(Mathf.Min(1f, rgb.r), Mathf.Min(1f, rgb.g), Mathf.Min(1f, rgb.b), 1f);
                 }
 
                 colorKeys.Add(new GradientColorKey(rgb, x));

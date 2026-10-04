@@ -332,52 +332,19 @@ namespace NonToonSwitcher
 
             var gradients = NonToonTextureBaker.BakeGradients(source, destination, folder, out var shadeIndex, out var rimShadeIndex, log);
 
-            // 亮度补偿：色带被整体除以 shadowRatio（明暗比值忠实于 lilToon），
-            // 这由 NonToon 自己的「亮度」(LightLimit 的 Brightness) 补回来 —— 转换器按材质自动填好，
-            // 用户之后可以随时在那个菜单里手改。
-            // 实测依据（同相机同光照，全模型正面均值）：Brightness 1.0 -> 0.287、1.7 -> 0.470、2.5 -> 0.661，lilToon = 0.728。
-            var shadeK = NonToonTextureBaker.ShadeRatio;
-            if (shadeK > 1.0001f)
-            {
-                const string brightnessProperty = "_com_atrinaxu_nontoon_lightlimit_Brightness";
-                if (ShaderUtility.HasProperty(destination, brightnessProperty))
-                {
-                    ShaderUtility.SetFloatValue(destination, brightnessProperty, shadeK);
-
-                    // ★ 必须同时抬高「亮度上限」，否则补偿会被钳掉。
-                    //
-                    // NonToon 的执行顺序（birp.hlsl）：
-                    //   134: sd.lightColor = saturate(env + lightSum.color);   ← 已经饱和到 1
-                    //   136: __SC_PHASE_modifylight__    ← LightLimit 的「亮度」在这里 ×K
-                    //   138: __SC_PHASE_shade__          ← Shade 色带 sd.col.rgb *= ramp(shade)
-                    //
-                    // 而 LightLimit 的相位里还有一层亮度钳位：
-                    //   half3 llColor = sd.lightColor * max(_Brightness, 0.0);
-                    //   half  llLuma  = max(dot(llColor, LUMA), 1e-5);
-                    //   llColor *= clamp(llLuma, _Min, _Max) / llLuma;      ← _Max 默认 1
-                    //
-                    // 受光区 lightColor 本来就等于 1 ⇒ ×K 之后被 clamp 回 1 ⇒ **补偿失效**，
-                    // 而色带仍被 ÷K ⇒ 净效果是"亮部不变、暗部再压暗 K 倍"。
-                    // 每个材质的 K 不同（实测 1.00~2.39）⇒ 各材质压暗程度不同 ⇒ 观感就是
-                    // 「亮度不均匀、脸受光影响大、暗的地方更暗」（用户实测反馈）。
-                    // 把上限抬到 K，补偿才真的生效（这只是撤掉挡在补偿前面的天花板，不是新的魔法值）。
-                    const string maxProperty = "_com_atrinaxu_nontoon_lightlimit_Max";
-                    if (ShaderUtility.HasProperty(destination, maxProperty))
-                    {
-                        var currentMax = destination.GetFloat(maxProperty);
-                        if (currentMax < shadeK)
-                            ShaderUtility.SetFloatValue(destination, maxProperty, shadeK);
-                    }
-
-                    log.Mapped("亮度补偿 x" + shadeK.ToString("0.###"),
-                        "已把 NonToon 的「亮度」设为 " + shadeK.ToString("0.###") +
-                        "，并把「亮度上限」抬到同值（否则受光区被钳到 1、补偿失效，表现为暗部被额外压暗）");
-                }
-                else
-                {
-                    log.Warn("找不到 LightLimit 的「亮度」属性，色带已按比值压暗但亮度没补 —— 请手动把「亮度」调到 " + shadeK.ToString("0.###") + "。");
-                }
-            }
+            // ★ 不再逐材质写「亮度」。
+            //
+            // 实测（分组切换的 avatar，46 个材质）：逐材质把 Brightness 设成各自的 shadowRatio 之后，
+            // 同一套 avatar 上的亮度倍率从 1.000 一路到 6.604（差 6.6 倍），色带也从 0.02 到 0.89（差 40 倍）。
+            // 单个材质看是自洽的，但多组开关切换时它们会同框出现 ⇒ 观感就是"亮度不均匀"。
+            // 现在统一保持中性（Brightness = 1、Max = 1），需要提亮时由用户在
+            // NonToon 模块 → LightLimit 里**整体调一次**，这样各材质才会一起变。
+            const string brightnessProperty = "_com_atrinaxu_nontoon_lightlimit_Brightness";
+            const string maxProperty = "_com_atrinaxu_nontoon_lightlimit_Max";
+            if (ShaderUtility.HasProperty(destination, brightnessProperty))
+                ShaderUtility.SetFloatValue(destination, brightnessProperty, 1f);
+            if (ShaderUtility.HasProperty(destination, maxProperty))
+                ShaderUtility.SetFloatValue(destination, maxProperty, 1f);
             if (gradients == null)
             {
                 // Without a ramp the Shade module would sample an empty array, which renders black, so the
