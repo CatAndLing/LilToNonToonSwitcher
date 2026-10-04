@@ -343,8 +343,35 @@ namespace NonToonSwitcher
                 if (ShaderUtility.HasProperty(destination, brightnessProperty))
                 {
                     ShaderUtility.SetFloatValue(destination, brightnessProperty, shadeK);
+
+                    // ★ 必须同时抬高「亮度上限」，否则补偿会被钳掉。
+                    //
+                    // NonToon 的执行顺序（birp.hlsl）：
+                    //   134: sd.lightColor = saturate(env + lightSum.color);   ← 已经饱和到 1
+                    //   136: __SC_PHASE_modifylight__    ← LightLimit 的「亮度」在这里 ×K
+                    //   138: __SC_PHASE_shade__          ← Shade 色带 sd.col.rgb *= ramp(shade)
+                    //
+                    // 而 LightLimit 的相位里还有一层亮度钳位：
+                    //   half3 llColor = sd.lightColor * max(_Brightness, 0.0);
+                    //   half  llLuma  = max(dot(llColor, LUMA), 1e-5);
+                    //   llColor *= clamp(llLuma, _Min, _Max) / llLuma;      ← _Max 默认 1
+                    //
+                    // 受光区 lightColor 本来就等于 1 ⇒ ×K 之后被 clamp 回 1 ⇒ **补偿失效**，
+                    // 而色带仍被 ÷K ⇒ 净效果是"亮部不变、暗部再压暗 K 倍"。
+                    // 每个材质的 K 不同（实测 1.00~2.39）⇒ 各材质压暗程度不同 ⇒ 观感就是
+                    // 「亮度不均匀、脸受光影响大、暗的地方更暗」（用户实测反馈）。
+                    // 把上限抬到 K，补偿才真的生效（这只是撤掉挡在补偿前面的天花板，不是新的魔法值）。
+                    const string maxProperty = "_com_atrinaxu_nontoon_lightlimit_Max";
+                    if (ShaderUtility.HasProperty(destination, maxProperty))
+                    {
+                        var currentMax = destination.GetFloat(maxProperty);
+                        if (currentMax < shadeK)
+                            ShaderUtility.SetFloatValue(destination, maxProperty, shadeK);
+                    }
+
                     log.Mapped("亮度补偿 x" + shadeK.ToString("0.###"),
-                        "已把 NonToon 的「亮度」设为 " + shadeK.ToString("0.###") + "（= 阴影色/平均底色，随材质自动算；可在模块菜单里手改）");
+                        "已把 NonToon 的「亮度」设为 " + shadeK.ToString("0.###") +
+                        "，并把「亮度上限」抬到同值（否则受光区被钳到 1、补偿失效，表现为暗部被额外压暗）");
                 }
                 else
                 {
