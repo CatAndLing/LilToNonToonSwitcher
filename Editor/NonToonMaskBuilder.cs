@@ -585,6 +585,23 @@ namespace NonToonSwitcher
 
             // 这张材质有没有真的烘出自发光（决定 R/G/B 是否保留数据）
 
+            // ★ A 通道来源**只在这一处决定**，后面写 PNG 与生成 .scmask 都严格用这个结果。
+            //
+            // 上一版把"要不要写 PNG"和"要不要直接引用"分成两处各自判断，结果两半各自生效、
+            // 互相打架：PNG 被跳过没生成，而 .scmask 仍按老路引用它 ⇒ 遮罩指向一个不存在的贴图 ✗。
+            // 现在统一成：能不能直接引用 → 一个变量说了算；引用不成立就照旧烘 PNG。
+            var directAlphaPath = (maskSourceCount == 1 && singleSourceTex != null)
+                ? AssetDatabase.GetAssetPath(singleSourceTex)
+                : null;
+            if (!string.IsNullOrEmpty(directAlphaPath) && !File.Exists(Path.GetFullPath(directAlphaPath)))
+                directAlphaPath = null;   // 解析不到实体文件就不冒险，老老实实烘
+            var directAlphaMode = directAlphaPath != null ? singleSourceMode : null;
+            log.Mapped("遮罩来源判定",
+                "lil 遮罩源 " + maskSourceCount + " 个 ⇒ " +
+                (directAlphaPath != null
+                    ? "直接引用源贴图 " + System.IO.Path.GetFileName(directAlphaPath) + "（" + directAlphaMode + " 通道），不烘 _NTMask.png"
+                    : "需要烘焙 _NTMask.png"));
+
             var directory = folder.Replace('\\', '/').TrimEnd('/');
             EnsureFolder(directory);
             var maskPath = directory + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_NTMask.png";
@@ -614,13 +631,8 @@ namespace NonToonSwitcher
                 }
             }
 
-            // 只挂了一张 lil 遮罩时，A 通道**直接指向那张源贴图**，不再烘 `<材质>_NTMask.png`。
-            //   合成时取的就是它自己的一个通道（见 sourceIsAlpha / sourceIsGreen），所以直接引用完全等价，
-            //   而且**零精度损失**（没有重采样）。实测 178 个源材质里 51 个属于这一类，
-            //   那批 2048²（约 112 MB 显存）的遮罩贴图正是由它们产生的。
-            var directAlphaPath = singleSourceTex != null ? AssetDatabase.GetAssetPath(singleSourceTex) : null;
-            var directAlphaMode = singleSourceMode;
-            // 只挂了一张遮罩 ⇒ A 直接引用源贴图 ⇒ **不写 `_NTMask.png`**（省掉那批大图）
+            // 只挂了一张遮罩 ⇒ A 直接引用源贴图 ⇒ **不写 `_NTMask.png`**（省掉那批大图）。
+            // 注意：这里必须与上面「遮罩来源判定」用同一个 directAlphaPath，绝不重新判断一次。
             if (directAlphaPath == null)
             {
                 WriteTexture(pixels, width, height, maskPath);
@@ -637,10 +649,6 @@ namespace NonToonSwitcher
             var emPathForMask = File.Exists(Path.GetFullPath(perMatEm2))
                 ? perMatEm2
                 : directory + "/_SharedNoEmission.png";
-            // ★ 只挂了一张 lil 遮罩时，A 通道**直接指向那张源贴图**，不再烘 `<材质>_NTMask.png`。
-            //   合成时取的就是它自己的一个通道（见 sourceIsAlpha / sourceIsGreen），所以直接引用完全等价，
-            //   而且**零精度损失**（没有重采样）。实测 178 个源材质里 51 个属于这一类，
-            //   那批 2048²（约 112 MB 显存）的遮罩贴图正是由它们产生的。
             // 生成失败就保留 PNG 引用，绝不留下空遮罩。
             Texture2D scmaskAsset = null;
             if (File.Exists(Path.GetFullPath(emPathForMask)) &&
