@@ -641,8 +641,6 @@ namespace NonToonSwitcher
             //   合成时取的就是它自己的一个通道（见 sourceIsAlpha / sourceIsGreen），所以直接引用完全等价，
             //   而且**零精度损失**（没有重采样）。实测 178 个源材质里 51 个属于这一类，
             //   那批 2048²（约 112 MB 显存）的遮罩贴图正是由它们产生的。
-            var directAlphaPath = singleSourceTex != null ? AssetDatabase.GetAssetPath(singleSourceTex) : null;
-            var directAlphaMode = singleSourceMode;
             // 生成失败就保留 PNG 引用，绝不留下空遮罩。
             Texture2D scmaskAsset = null;
             if (File.Exists(Path.GetFullPath(emPathForMask)) &&
