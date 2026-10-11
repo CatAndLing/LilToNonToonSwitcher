@@ -472,7 +472,8 @@ namespace NonToonSwitcher
             // 自发光单独出一张贴图（共享遮罩带 [SCMask] 特性，运行时被 Shader Core 自己的遮罩系统接管，
             // 实测写进去的值读不到 —— shader 里 sd.mask 恒为白）。所以模块自带一个普通贴图槽 _EmissionTexture。
             // 自发光贴图永远要有一张：空槽在 shader 里采样是白色，会被当成满强度自发光。
-            if (emissionPixels == null || emissionWidth <= 0 || emissionHeight <= 0)
+            var placeholderEmission = emissionPixels == null || emissionWidth <= 0 || emissionHeight <= 0;
+            if (placeholderEmission)
             {
                 emissionPixels = new Color[] { new Color(0f, 0f, 0f, 1f) };
                 emissionWidth = 1;
@@ -482,23 +483,34 @@ namespace NonToonSwitcher
             {
                 var dir2 = folder.Replace('\\', '/').TrimEnd('/');
                 EnsureFolder(dir2);
-                var emPath = dir2 + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
-                WriteTexture(emissionPixels, emissionWidth, emissionHeight, emPath);
-                AssetDatabase.ImportAsset(emPath, ImportAssetOptions.ForceUpdate);
-                // 发射贴图必须**无压缩、无 mipmap、不 Clamp 拉伸**，否则眼睛高光会发糊（用户对比 lil 指出）。
-                // 它是颜色贴图（HDR 蓝白），所以 sRGB = true。
-                if (AssetImporter.GetAtPath(emPath) is TextureImporter emImp)
+                // ★ 没有自发光的材质**不再各写一张 1×1 的 `_Emission.png`**，改用共享的一张。
+                //
+                // 实测收益（mirufy，46 个材质）：原来 20 个材质各自产出 1×1 `_Emission.png`
+                // ⇒ 20 个 png + 20 个 png.meta = **40 个纯占位文件**（每个还带 3.3KB 的 meta）。
+                // 它们的内容完全一样（1×1 全黑），只是给 `.scmask` 的 R/G/B 提供一个"零"来源，
+                // 所以共享一张即可，语义完全不变（采样结果依旧是 0）。
+                var emPath = placeholderEmission
+                    ? dir2 + "/_SharedNoEmission.png"
+                    : dir2 + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
+                if (!placeholderEmission || !File.Exists(Path.GetFullPath(emPath)))
                 {
-                    emImp.textureType = TextureImporterType.Default;
-                    emImp.sRGBTexture = true;
-                    emImp.alphaSource = TextureImporterAlphaSource.FromInput;
-                    emImp.alphaIsTransparency = false;
-                    emImp.mipmapEnabled = false;
-                    emImp.wrapMode = TextureWrapMode.Clamp;
-                    emImp.filterMode = FilterMode.Bilinear;
-                    emImp.textureCompression = TextureImporterCompression.Uncompressed;
-                    emImp.maxTextureSize = 4096;
-                    emImp.SaveAndReimport();
+                    WriteTexture(emissionPixels, emissionWidth, emissionHeight, emPath);
+                    AssetDatabase.ImportAsset(emPath, ImportAssetOptions.ForceUpdate);
+                    // 发射贴图必须**无压缩、无 mipmap、不 Clamp 拉伸**，否则眼睛高光会发糊（用户对比 lil 指出）。
+                    // 它是颜色贴图（HDR 蓝白），所以 sRGB = true。
+                    if (AssetImporter.GetAtPath(emPath) is TextureImporter emImp)
+                    {
+                        emImp.textureType = TextureImporterType.Default;
+                        emImp.sRGBTexture = true;
+                        emImp.alphaSource = TextureImporterAlphaSource.FromInput;
+                        emImp.alphaIsTransparency = false;
+                        emImp.mipmapEnabled = false;
+                        emImp.wrapMode = TextureWrapMode.Clamp;
+                        emImp.filterMode = FilterMode.Bilinear;
+                        emImp.textureCompression = TextureImporterCompression.Uncompressed;
+                        emImp.maxTextureSize = 4096;
+                        emImp.SaveAndReimport();
+                    }
                 }
                 var emAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(emPath);
                 var emSlot = ModuleInstaller.FindModuleProperty(nonToonMaterial.shader, "shadereplace", "EmissionTexture");
@@ -533,7 +545,13 @@ namespace NonToonSwitcher
                     }
                 }
                 var scOnlyPath = folder.Replace('\\', '/').TrimEnd('/') + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_NTMask.scmask";
-                var emOnlyPath = folder.Replace('\\', '/').TrimEnd('/') + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
+                // 自发光贴图路径：优先用本材质自己的；没有（说明是"无自发光"的占位情形）就用共享那张。
+                // 见上面 `placeholderEmission` 处的说明 —— 这样就不再为每个无发光材质产出一张 1×1 占位图。
+                var dirOnly = folder.Replace('\\', '/').TrimEnd('/');
+                var perMatEm = dirOnly + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
+                var emOnlyPath = File.Exists(Path.GetFullPath(perMatEm))
+                    ? perMatEm
+                    : dirOnly + "/_SharedNoEmission.png";
                 if (File.Exists(Path.GetFullPath(emOnlyPath)) && BuildScmask(scOnlyPath, emOnlyPath, null, log))
                 {
                     var onlyAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(scOnlyPath);
@@ -585,7 +603,11 @@ namespace NonToonSwitcher
             // R/G/B 取自发光贴图（自发光数据）、A 取上面刚生成的遮罩 PNG（其它模块都读 A）。
             // 生成失败就保留 PNG 引用，绝不留下空遮罩。
             var scPath = directory + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_NTMask.scmask";
-            var emPathForMask = directory + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
+            // 自发光路径：本材质自己的优先；没有就用共享占位图（无自发光的材质不再各写一张 1×1 图）。
+            var perMatEm2 = directory + "/" + ShaderUtility.SanitizeFileName(nonToonMaterial.name) + "_Emission.png";
+            var emPathForMask = File.Exists(Path.GetFullPath(perMatEm2))
+                ? perMatEm2
+                : directory + "/_SharedNoEmission.png";
             // ★ 记住 .scmask 是否接上了：下面写 PNG 时必须**不要覆盖**它。
             //
             // 实测事故（mirufy 模型，整身被染青）：
