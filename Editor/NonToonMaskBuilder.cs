@@ -80,6 +80,11 @@ namespace NonToonSwitcher
             Color[] pixels = null;
             var width = 0;
             var height = 0;
+            // 这张材质挂了几张 lil 遮罩；只挂一张时可以把 .scmask 的 A 通道直接指向那张源贴图，
+            // 从而完全省掉 `<材质>_NTMask.png`（那批 2048² 的大图就是这么来的）。
+            var maskSourceCount = 0;
+            Texture2D singleSourceTex = null;
+            string singleSourceMode = null;
             var emissionStrengthForKeyword = 0f;
             Color[] emissionPixels = null;
             var emissionWidth = 0;
@@ -175,6 +180,20 @@ namespace NonToonSwitcher
                 used.Add(source.FeatureName);
                 var sourceIsAlpha = source.LilToonProperty == "_BacklightColorTex";
                 var sourceIsGreen = source.LilToonProperty == "_RimColorTex";
+
+                // ★ 记录"这张材质到底挂了几张 lil 遮罩"，以及第一张的来源与取样通道。
+                // 只挂 1 张时（实测这类占 51/178）可以直接把 .scmask 的 A 通道指向**那张源贴图本身**，
+                // 于是连 <材质>_NTMask.png 都不用烘 —— 那批 2048² 的大图正是这么来的。
+                maskSourceCount++;
+                if (maskSourceCount == 1)
+                {
+                    singleSourceTex = texture;
+                    singleSourceMode = sourceIsAlpha ? "A" : sourceIsGreen ? "G" : "R";
+                }
+                else
+                {
+                    singleSourceTex = null;   // 出现第二张就不适用了
+                }
 
                 for (var y = 0; y < height; y++)
                 {
@@ -595,8 +614,18 @@ namespace NonToonSwitcher
                 }
             }
 
-            WriteTexture(pixels, width, height, maskPath);
-            ImportAsMask(maskPath);
+            // 只挂了一张 lil 遮罩时，A 通道**直接指向那张源贴图**，不再烘 `<材质>_NTMask.png`。
+            //   合成时取的就是它自己的一个通道（见 sourceIsAlpha / sourceIsGreen），所以直接引用完全等价，
+            //   而且**零精度损失**（没有重采样）。实测 178 个源材质里 51 个属于这一类，
+            //   那批 2048²（约 112 MB 显存）的遮罩贴图正是由它们产生的。
+            var directAlphaPath = singleSourceTex != null ? AssetDatabase.GetAssetPath(singleSourceTex) : null;
+            var directAlphaMode = singleSourceMode;
+            // 只挂了一张遮罩 ⇒ A 直接引用源贴图 ⇒ **不写 `_NTMask.png`**（省掉那批大图）
+            if (directAlphaPath == null)
+            {
+                WriteTexture(pixels, width, height, maskPath);
+                ImportAsMask(maskPath);
+            }
 
             // 共享遮罩带 [SCMask]：Shader Core 会用它自己的 .scmask 生成器产出贴图，直接写 PNG 的引用
             // 在运行时读不到（实测 shader 里恒为默认白）。所以额外生成一个 .scmask：
@@ -608,23 +637,26 @@ namespace NonToonSwitcher
             var emPathForMask = File.Exists(Path.GetFullPath(perMatEm2))
                 ? perMatEm2
                 : directory + "/_SharedNoEmission.png";
-            // ★ 记住 .scmask 是否接上了：下面写 PNG 时必须**不要覆盖**它。
-            //
-            // 实测事故（mirufy 模型，整身被染青）：
-            //   第 568 行接上了正确的 .scmask（RGBA32、R/G/B=自发光、A=原遮罩），
-            //   但下面第 602 行又无条件 `SetTexture("_SharedMask", asset)` 把 PNG 写了回去，
-            //   PNG 是 RGB24 且 R/G/B 装着**旧版**的遮罩内容（实测 Body_base 为 (0.001,1,1)）
-            //   ⇒ postpixel 的 `sd.col.rgb += sd.mask.rgb` 给整身加了一层青色（白物体变青、皮肤变灰蓝，
-            //     而红色通道恰好正常 ⇒ 眼睛仍正确）。所以这里用这个标志阻止覆盖。
+            // ★ 只挂了一张 lil 遮罩时，A 通道**直接指向那张源贴图**，不再烘 `<材质>_NTMask.png`。
+            //   合成时取的就是它自己的一个通道（见 sourceIsAlpha / sourceIsGreen），所以直接引用完全等价，
+            //   而且**零精度损失**（没有重采样）。实测 178 个源材质里 51 个属于这一类，
+            //   那批 2048²（约 112 MB 显存）的遮罩贴图正是由它们产生的。
+            var directAlphaPath = singleSourceTex != null ? AssetDatabase.GetAssetPath(singleSourceTex) : null;
+            var directAlphaMode = singleSourceMode;
+            // 生成失败就保留 PNG 引用，绝不留下空遮罩。
             Texture2D scmaskAsset = null;
-            if (File.Exists(Path.GetFullPath(emPathForMask)) && BuildScmask(scPath, emPathForMask, maskPath, log))
+            if (File.Exists(Path.GetFullPath(emPathForMask)) &&
+                (directAlphaPath != null
+                    ? BuildScmask(scPath, emPathForMask, null, log, directAlphaPath, directAlphaMode, 1f)
+                    : BuildScmask(scPath, emPathForMask, maskPath, log)))
             {
                 scmaskAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(scPath);
                 if (scmaskAsset != null)
                 {
                     nonToonMaterial.SetTexture("_SharedMask", scmaskAsset);
                     EditorUtility.SetDirty(nonToonMaterial);
-                    log.Mapped("共享遮罩", scPath + "（.scmask：R/G/B=自发光、A=原遮罩）");
+                    log.Mapped("共享遮罩", scPath + "（.scmask：R/G/B=自发光、A=" +
+                        (directAlphaPath != null ? "直接引用 " + System.IO.Path.GetFileName(directAlphaPath) + " 的 " + directAlphaMode + " 通道（未烘遮罩）" : "原遮罩") + "）");
                 }
             }
 
@@ -872,7 +904,8 @@ namespace NonToonSwitcher
         /// 生成 Shader Core 的 .scmask 遮罩资产（MaskImporter 按通道生成贴图）。
         /// 注意必须 EditorUtility.SetDirty + WriteImportSettingsIfDirty，否则设置在 SaveAndReimport 时不会序列化。
         /// </summary>
-        private static bool BuildScmask(string scmaskPath, string emissionPath, string maskPath, ConversionLog log)
+        private static bool BuildScmask(string scmaskPath, string emissionPath, string maskPath, ConversionLog log,
+            string alphaSourcePath = null, string alphaSourceMode = null, float alphaFallback = 1f)
         {
             try
             {
@@ -933,10 +966,21 @@ namespace NonToonSwitcher
                 {
                     var alpha = alphaField.GetValue(importer);
                     var alphaType = alpha.GetType();
-                    alphaType.GetField("tex", flags).SetValue(alpha, mask);
+                    // ★ A 通道来源：调用方可以指定"直接指向源贴图"（省掉整个 _NTMask.png）。
+                    //
+                    // 为什么要这么做（实测数据）：真正需要烘遮罩的材质很少 —— 178 个源材质里
+                    // 挂 0 张 lil 遮罩的 106 个（60%）、只挂 1 张的 51 个，**合计 88% 都不需要合成**。
+                    // 挂 0 张的 ⇒ A 指向共享的 1×1 白图；挂 1 张的 ⇒ A 直接指向那张源贴图本身
+                    // （合成时它取的就是那个源贴图的某一个通道，见上面 sourceIsAlpha / sourceIsGreen 的判断）。
+                    // 这样那批 2048² 的 `_NTMask.png`（7 张 ⇒ 约 112 MB 显存）可以直接消失。
+                    var alphaTex = !string.IsNullOrEmpty(alphaSourcePath)
+                        ? AssetDatabase.LoadAssetAtPath<Texture2D>(alphaSourcePath)
+                        : mask;
+                    if (alphaTex != null) alphaType.GetField("tex", flags).SetValue(alpha, alphaTex);
                     var alphaMode = alphaType.GetField("mode", flags);
-                    alphaMode.SetValue(alpha, Enum.Parse(alphaMode.FieldType, "A"));
-                    alphaType.GetField("fallbackValue", flags).SetValue(alpha, 1f);
+                    alphaMode.SetValue(alpha, Enum.Parse(alphaMode.FieldType,
+                        string.IsNullOrEmpty(alphaSourceMode) ? "A" : alphaSourceMode));
+                    alphaType.GetField("fallbackValue", flags).SetValue(alpha, alphaFallback);
                     alphaField.SetValue(importer, alpha);
                 }
                 var wf = type.GetField("width", flags);
