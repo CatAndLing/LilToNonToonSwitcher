@@ -1033,10 +1033,49 @@ namespace NonToonSwitcher
                     alphaType.GetField("fallbackValue", flags).SetValue(alpha, alphaFallback);
                     alphaField.SetValue(importer, alpha);
                 }
+                // ★ 输出尺寸**按实际需要给**，绝不写死 1024。
+                //
+                // 实测用户反馈："这么多 ntmask 全是全黑的但是还是在，而且每个都会吃 5.3mb"。
+                // 5.33 MB = 1024 × 1024 × 4 字节 × 4/3(mipmap) —— 完全对上，原因就在这里：
+                //   ① 当初把 width/height 写死 1024；
+                //   ② Shader Core 的 MaskGenerator 是 `new Texture2D(w, h, RGBA32, true)`，**强制带 mipmap**（+33%）；
+                //   ③ 于是**每个材质**不管用不用得上，都生成一张 1024² RGBA32 + mipmap = 5.33 MB 的遮罩贴图。
+                //      "一张 lil 遮罩都没挂"的材质（A 恒为 1、内容全黑）也照吃 5.33 MB ⇒ 纯浪费。
+                //
+                // 现在按来源决定：
+                //   · A 是 fallback（没有任何遮罩源，A 恒为常量）⇒ **4×4**（约 0.08 MB，省 64 倍）
+                //   · A 直接引用某张源贴图                      ⇒ 用那张贴图的尺寸（不超过 1024）
+                //   · A 是烘出来的 `_NTMask.png`                ⇒ 用那张 PNG 的尺寸（不超过 1024）
+                var maskW = 1024;
+                var maskH = 1024;
+                if (!string.IsNullOrEmpty(alphaSourcePath))
+                {
+                    var srcTex = AssetDatabase.LoadAssetAtPath<Texture2D>(alphaSourcePath);
+                    if (srcTex != null)
+                    {
+                        maskW = Mathf.Clamp(srcTex.width, 4, 1024);
+                        maskH = Mathf.Clamp(srcTex.height, 4, 1024);
+                    }
+                }
+                else
+                {
+                    var bakedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(maskPath);
+                    if (bakedTex != null)
+                    {
+                        maskW = Mathf.Clamp(bakedTex.width, 4, 1024);
+                        maskH = Mathf.Clamp(bakedTex.height, 4, 1024);
+                    }
+                    else
+                    {
+                        // 拿不到任何来源 ⇒ A 只能靠 fallbackValue（常量）⇒ 用最小尺寸即可
+                        maskW = 4;
+                        maskH = 4;
+                    }
+                }
                 var wf = type.GetField("width", flags);
-                if (wf != null) wf.SetValue(importer, 1024);
+                if (wf != null) wf.SetValue(importer, maskW);
                 var hf = type.GetField("height", flags);
-                if (hf != null) hf.SetValue(importer, 1024);
+                if (hf != null) hf.SetValue(importer, maskH);
 
                 // ★ 关键：把 .scmask 的输出格式设成 RGBA32（无损）。
                 //
