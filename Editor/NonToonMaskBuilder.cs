@@ -571,15 +571,26 @@ namespace NonToonSwitcher
                 var emOnlyPath = File.Exists(Path.GetFullPath(perMatEm))
                     ? perMatEm
                     : dirOnly + "/_SharedNoEmission.png";
-                if (File.Exists(Path.GetFullPath(emOnlyPath)) && BuildScmask(scOnlyPath, emOnlyPath, null, log))
+                // ★ 一张 lil 遮罩都没挂 ⇒ **A 通道指向共享的 1×1 白图**，绝不烘 `<材质>_NTMask.png`。
+                //
+                // 之前这里漏了：本分支上面刚给 `pixels` 赋过值，于是下面 `if (pixels == null) return;`
+                // 不再成立 ⇒ 流程继续往下走 ⇒ 照样写出**一张纯黑的 `_NTMask.png`** ✗。
+                // 实测用户反馈"转完还是一堆一模一样的纯黑 ntmask、体积没变"，就是这批（0 源材质有 106/178 个）。
+                // A = 1 的语义与"烘一张全白遮罩"完全一致（下游模块读 A 当"处处生效"），
+                // 所以直接指向共享白图即可，一张文件替代 N 张。
+                var sharedWhite = EnsureSharedWhiteMask(folder);
+                if (File.Exists(Path.GetFullPath(emOnlyPath)) &&
+                    BuildScmask(scOnlyPath, emOnlyPath, null, log, sharedWhite, "R", 1f))
                 {
                     var onlyAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(scOnlyPath);
                     if (onlyAsset != null)
                     {
                         nonToonMaterial.SetTexture("_SharedMask", onlyAsset);
-                        log.Mapped("共享遮罩", scOnlyPath + "（无遮罩源：R/G/B=自发光、A=1）");
+                        EditorUtility.SetDirty(nonToonMaterial);
+                        log.Mapped("共享遮罩", scOnlyPath + "（无遮罩源：R/G/B=自发光、A=共享白图，未烘 _NTMask.png）");
                     }
                 }
+                return;   // ★ 0 源材质到此结束，绝不再往下写纯黑的 _NTMask.png
             }
             if (pixels == null) return;
 
@@ -767,6 +778,39 @@ namespace NonToonSwitcher
                                  "。请在转换后的材质上手动把该模块的 Mask Channel 改成 " + "RGBA"[pair.Value] + "。");
                 }
             }
+        }
+
+        /// <summary>
+        /// 确保输出目录里有一张共享的 1×1 白图，用作"没有遮罩源"材质的 .scmask A 通道来源。
+        ///
+        /// 为什么需要它：一张 lil 遮罩都没挂的材质（实测 178 个源材质里占 106 个，60%）根本不需要遮罩，
+        /// A 通道只要恒为 1（= 下游模块处处生效）即可。以前是给每个这种材质烘一张 `<材质>_NTMask.png`，
+        /// 内容全白、彼此完全一样 —— 用户反馈的"一堆一模一样的纯黑 ntmask"就是这批。
+        /// 现在共享一张，N 个材质只占 1 个文件。
+        /// </summary>
+        private static string EnsureSharedWhiteMask(string folder)
+        {
+            var dir = folder.Replace('\\', '/').TrimEnd('/');
+            EnsureFolder(dir);
+            var path = dir + "/_SharedWhiteMask.png";
+            if (File.Exists(Path.GetFullPath(path))) return path;
+            WriteTexture(new[] { Color.white }, 1, 1, path);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            if (AssetImporter.GetAtPath(path) is TextureImporter imp)
+            {
+                // 遮罩类贴图：不压缩、不 mipmap、Clamp，单像素也就无所谓 sRGB
+                imp.textureType = TextureImporterType.Default;
+                imp.sRGBTexture = false;
+                imp.alphaSource = TextureImporterAlphaSource.FromInput;
+                imp.alphaIsTransparency = false;
+                imp.mipmapEnabled = false;
+                imp.wrapMode = TextureWrapMode.Clamp;
+                imp.filterMode = FilterMode.Point;
+                imp.textureCompression = TextureImporterCompression.Uncompressed;
+                imp.maxTextureSize = 32;
+                imp.SaveAndReimport();
+            }
+            return path;
         }
 
         private static void WriteTexture(Color[] pixels, int width, int height, string path)
