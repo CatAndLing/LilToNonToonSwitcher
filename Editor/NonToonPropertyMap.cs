@@ -497,6 +497,26 @@ namespace NonToonSwitcher
                     : 3;
                 var to = blendMode != 3 && ShaderUtility.HasProperty(dst, addColor) ? addColor : multiplyColor;
                 if (!ShaderUtility.HasProperty(dst, to)) return;
+
+                // ★ HDR 峰值归一化：lilToon 允许 _MatCapColor 超过 1（HDR），NonToon 没有强度属性可以承接。
+                //
+                // 实测事故（shinano 的头发）：源 `_MatCapColor = (2.1185, 1.8952, 1.7888)`、BlendMode=1(Add)。
+                // 原样搬过去之后头发出现**明显的镜面高光条纹、像金属**（用户反馈"matcap 导致头发反射有类似金属光泽"）。
+                // 渲染 A/B 实测：把颜色降到 1.0 后高光条纹消失（>0.35 的高光像素占比 3.04% → 0.00%），
+                // 颜色本身不变（色相保留）。根因是 NonToon 侧少了两个衰减环节：
+                //   ① lil 有 `_MatCapNormalStrength`（这里是 0.7）把**模型法线**混进采样方向 ⇒ 反光被打散；
+                //   ② lil 的 matcap 会乘 `sd.shadow` ⇒ 暗处不反光。
+                // NonToon 的 `sd.add += matcap * _MatCapAddColor` 两者都没有 ⇒ 同样的 HDR 值就会过亮成金属。
+                // 所以这里按峰值归一化（保留色相、去掉超出 1 的部分），用户想要更亮可以在模块面板里自行调回。
+                var peak = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+                if (peak > 1.0001f)
+                {
+                    color = new Color(color.r / peak, color.g / peak, color.b / peak, color.a);
+                    log.Mapped("_MatCapColor HDR 归一化",
+                        "原峰值 " + peak.ToString("0.###") + " → 除以峰值（保留色相，" +
+                        color.r.ToString("0.###") + "," + color.g.ToString("0.###") + "," + color.b.ToString("0.###") +
+                        "）。NonToon 没有 _MatCapNormalStrength 与阴影衰减，超出 1 的部分会变成金属高光");
+                }
                 dst.SetColor(to, color);
                 log.Mapped("_MatCapColor " + color.ToString("0.###"), to);
             }, "MatCap 颜色：需要安装 NonToon 的 MatCaps 模块。");
@@ -532,9 +552,14 @@ namespace NonToonSwitcher
                 var color = ShaderUtility.HasProperty(src, "_MatCap2ndColor") ? src.GetColor("_MatCap2ndColor") : Color.white;
                 // lilToon 的 _MatCap2ndBlend 是这一层的强度，NonToon 没有单独的强度属性 → 乘进颜色里
                 var blend = ShaderUtility.HasProperty(src, "_MatCap2ndBlend") ? Mathf.Clamp01(src.GetFloat("_MatCap2ndBlend")) : 1f;
+                // 同样做 HDR 峰值归一化（理由见第一层 _MatCapColor 处的说明）
+                var peak2 = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+                if (peak2 > 1.0001f)
+                    color = new Color(color.r / peak2, color.g / peak2, color.b / peak2, color.a);
                 var scaled = new Color(color.r * blend, color.g * blend, color.b * blend, color.a);
                 dst.SetColor(to, scaled);
-                log.Mapped("_MatCap2ndColor × _MatCap2ndBlend " + blend.ToString("0.###"), to);
+                log.Mapped("_MatCap2ndColor × _MatCap2ndBlend " + blend.ToString("0.###") +
+                    (peak2 > 1.0001f ? "（HDR 峰值 " + peak2.ToString("0.###") + " 已归一化）" : ""), to);
             }, "MatCap 第二层颜色：需要安装 NonToon 的 MatCaps 模块。");
 
             // ----- specular / reflection -----
