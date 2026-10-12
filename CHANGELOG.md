@@ -1,5 +1,15 @@
 # 更新日志
 
+## [1.3.3] - 2025-10-05
+
+### 修复
+- **MatCap 导致头发出现金属光泽**：lilToon 的 `_MatCapColor` 允许超过 1（HDR），
+  而 NonToon 的 `sd.add += matcap * _MatCapAddColor` 缺少 lil 的两个衰减环节 ——
+  ① `_MatCapNormalStrength`（把模型法线混进采样方向、打散反光）；② 乘 `sd.shadow`（暗处不反光）。
+  于是同一个 HDR 值在 NonToon 下过亮成金属。实测（shinano 头发）：`_MatCapColor = (2.1185, 1.8952, 1.7888)`，
+  原样搬运后高光(>0.35)像素占比 3.10%，峰值归一化后降到 **0.00%**，色相不变。
+  现在第一层与第二层 `_MatCapColor` 都做**峰值归一化**（除以 max(R,G,B)）；想要更亮可在 MatCap 面板里自行调回。
+
 ## [1.3.2] - 2025-10-05
 
 ### 修复
