@@ -75,6 +75,16 @@ public static class SurfaceCompatibilityRegression
     }
     static float Difference(Color[] a,Color[] b) {return a.Zip(b,(x,y)=>Mathf.Abs(x.r-y.r)+Mathf.Abs(x.g-y.g)+Mathf.Abs(x.b-y.b)).Average();}
     static int Extent(Color[] p) {int min=192,max=-1;for(int i=0;i<p.Length;i++)if(Mathf.Max(p[i].r,Mathf.Max(p[i].g,p[i].b))>0.015f){min=Mathf.Min(min,i%192);max=Mathf.Max(max,i%192);}return max-min+1;}
+    static Texture2D Pattern(float offset, bool gradient) {
+        var texture=new Texture2D(128,8,TextureFormat.RGBA32,false,true) {wrapMode=TextureWrapMode.Repeat,filterMode=FilterMode.Bilinear};
+        var pixels=new Color[128*8];
+        for(int y=0;y<8;y++) for(int x=0;x<128;x++) {
+            float u=Mathf.Repeat((x+0.5f)/128+offset,1);
+            pixels[y*128+x]=gradient?new Color(u,0.25f,0.1f,1):(u<0.5f?Color.white:Color.black);
+        }
+        texture.SetPixels(pixels);texture.Apply();
+        return texture;
+    }
     public static List<object> RunAll() {
         var rows=new List<object>();
         var source=Shader.Find("lilToon");
@@ -122,6 +132,45 @@ public static class SurfaceCompatibilityRegression
             actual=Convert(s);var masked=Render(actual);Object.DestroyImmediate(actual);actual=null;
             float maskDiff=Difference(noCap,masked);
             rows.Add(new{name="Black MatCap mask suppresses the effect",pass=maskDiff<0.001f,difference=maskDiff});
+            var pattern=Pattern(0,false);var shiftedPattern=Pattern(0.25f,false);var gradient=Pattern(0,true);
+            var bump=new Texture2D(4,4,TextureFormat.RGBA32,false,true);
+            bump.SetPixels(Enumerable.Repeat(new Color(0.8f,0.5f,0.8f,1),16).ToArray());bump.Apply();
+            var uvSource=new Material(source);
+            try {
+                uvSource.SetFloat("_UseMatCap",1);uvSource.SetFloat("_MatCapBlendMode",0);
+                uvSource.SetFloat("_MatCapBlend",1);uvSource.SetColor("_MatCapColor",Color.white);
+                uvSource.SetFloat("_MatCapEnableLighting",0);uvSource.SetFloat("_MatCapShadowMask",0);
+                uvSource.SetTexture("_MatCapTex",gradient);uvSource.SetTexture("_BumpMap",bump);
+                uvSource.SetFloat("_UseBumpMap",1);uvSource.SetFloat("_BumpScale",1);
+                uvSource.SetTexture("_MatCapBumpMap",bump);uvSource.SetFloat("_MatCapBumpScale",1);
+                uvSource.SetFloat("_MatCapNormalStrength",1);uvSource.SetFloat("_MatCapCustomNormal",0);
+                actual=Convert(uvSource);var mainNormal=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                uvSource.SetFloat("_MatCapCustomNormal",1);
+                actual=Convert(uvSource);var customNormal=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                float normalDifference=Difference(mainNormal,customNormal);
+                rows.Add(new{name="MatCap applies the main bump once",pass=normalDifference<0.001f,difference=normalDifference});
+                uvSource.SetTexture("_BumpMap",null);uvSource.SetFloat("_UseBumpMap",0);uvSource.SetFloat("_MatCapCustomNormal",0);
+                uvSource.SetTexture("_MatCapTex",Texture2D.whiteTexture);
+                uvSource.SetTexture("_MatCapBlendMask",pattern);
+                uvSource.SetTextureOffset("_MainTex",new Vector2(0.25f,0));
+                actual=Convert(uvSource);var transformedMask=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                uvSource.SetTextureOffset("_MainTex",Vector2.zero);uvSource.SetTexture("_MatCapBlendMask",shiftedPattern);
+                actual=Convert(uvSource);var expectedMask=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                float uvDifference=Difference(transformedMask,expectedMask);
+                rows.Add(new{name="MatCap masks follow source main UV",pass=uvDifference<0.001f,difference=uvDifference});
+                uvSource.SetFloat("_UseMatCap",0);uvSource.SetTexture("_OutlineWidthMask",pattern);
+                uvSource.SetTextureOffset("_MainTex",new Vector2(0.25f,0));
+                uvSource.SetTextureScale("_OutlineWidthMask",new Vector2(2,1));
+                uvSource.SetTextureOffset("_OutlineWidthMask",new Vector2(0.1f,0));
+                actual=Convert(uvSource);actual.SetFloat("_OutlineWidth",10);
+                var transformedOutline=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                uvSource.SetTextureOffset("_MainTex",Vector2.zero);uvSource.SetTexture("_OutlineWidthMask",shiftedPattern);
+                uvSource.SetTextureScale("_OutlineWidthMask",Vector2.one);uvSource.SetTextureOffset("_OutlineWidthMask",Vector2.zero);
+                actual=Convert(uvSource);actual.SetFloat("_OutlineWidth",10);
+                var expectedOutline=Render(actual);Object.DestroyImmediate(actual);actual=null;
+                float outlineUVDifference=Difference(transformedOutline,expectedOutline);
+                rows.Add(new{name="Outline masks use main UV and ignore their own ST",pass=outlineUVDifference<0.001f,difference=outlineUVDifference});
+            } finally {Object.DestroyImmediate(uvSource);Object.DestroyImmediate(pattern);Object.DestroyImmediate(shiftedPattern);Object.DestroyImmediate(gradient);Object.DestroyImmediate(bump);}
             s.SetTexture("_MatCapBlendMask",Texture2D.whiteTexture);
             s.SetColor("_MatCapColor",new Color(0.3f,0,0,1));s.SetFloat("_MatCapBlendMode",1);
             actual=Convert(s);var additive=Render(actual)[192*96+96];Object.DestroyImmediate(actual);actual=null;

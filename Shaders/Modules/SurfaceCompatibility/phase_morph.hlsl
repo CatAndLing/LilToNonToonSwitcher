@@ -4,7 +4,7 @@
 if (_Enable > 0.5 && _OutlineCompatible > 0.5)
 {
     float widthMask = _OutlineWidthMask.SampleLevel(sampler_linear_repeat,
-        vertex.uv[0].xy * _OutlineWidthMask_ST.xy + _OutlineWidthMask_ST.zw, 0).r;
+        vertex.uv[0].xy * _MainUV.xy + _MainUV.zw, 0).r;
     if (_OutlineVertexWidth > 0.5 && _OutlineVertexWidth < 1.5) widthMask *= vertex.color.r;
     if (_OutlineVertexWidth > 1.5) widthMask *= vertex.color.a;
     widthMask *= lerp(1.0, saturate(length(head.position.xyz - vertex.position)), _OutlineFixWidth);

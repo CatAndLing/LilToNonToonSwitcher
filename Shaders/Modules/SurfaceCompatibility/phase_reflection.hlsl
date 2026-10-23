@@ -2,12 +2,13 @@ if (_Enable > 0.5 && _LilCompatible > 0.5)
 {
     half3 lilOriginalLit = sd.col.rgb * sd.lightColor;
     half3 lilLit = lilOriginalLit;
+    float2 lilMainUV = sd.uv * _MainUV.xy + _MainUV.zw;
     if (_Lil0Enabled > 0.5)
     {
-        half3 lilN = normalize(lerp(normalize(vertex.N), sd.N_detail, _Lil0NormalStrength));
+        half3 lilN = normalize(lerp(normalize(vertex.N), sd.N, _Lil0NormalStrength));
         if (_Lil0CustomNormal > 0.5)
         {
-            half4 lilNormalTex = SCSampleRepeat(_Lil0BumpMap, sd.uv * _Lil0BumpMap_ST.xy + _Lil0BumpMap_ST.zw);
+            half4 lilNormalTex = SCSampleRepeat(_Lil0BumpMap, lilMainUV * _Lil0BumpMap_ST.xy + _Lil0BumpMap_ST.zw);
             lilN = normalize(mul(SCUnpackNormal(lilNormalTex, _Lil0BumpScale), vertex.TBN));
         }
         float3 lilView = normalize(lerp(vertex.Head, vertex.V, _Lil0VRParallaxStrength));
@@ -19,7 +20,7 @@ if (_Enable > 0.5 && _LilCompatible > 0.5)
         lilUV = lerp(lilUV, saturate(vertex.uv[1].xy)*2-1, _Lil0BlendUV1.xy);
         lilUV = (lilUV * _Lil0Texture_ST.xy + _Lil0Texture_ST.zw) * 0.5 + 0.5;
         half4 lilCap = _Lil0Texture.SampleLevel(sampler_linear_repeat, lilUV, _Lil0Lod) * _Lil0Color;
-        half3 lilMask = SCSampleRepeat(_Lil0Mask, sd.uv * _Lil0Mask_ST.xy + _Lil0Mask_ST.zw).rgb;
+        half3 lilMask = SCSampleRepeat(_Lil0Mask, lilMainUV * _Lil0Mask_ST.xy + _Lil0Mask_ST.zw).rgb;
         lilCap.rgb *= lerp(1, sd.lightColor, _Lil0EnableLighting);
         lilCap.rgb *= lerp(1, sd.albedoAlpha.rgb, _Lil0MainStrength);
         half3 lilWeight = _Lil0Blend * lilCap.a * lilMask * lerp(1, sd.shadow, _Lil0ShadowMask);
@@ -33,10 +34,10 @@ if (_Enable > 0.5 && _LilCompatible > 0.5)
     }
     if (_Lil1Enabled > 0.5)
     {
-        half3 lilN = normalize(lerp(normalize(vertex.N), sd.N_detail, _Lil1NormalStrength));
+        half3 lilN = normalize(lerp(normalize(vertex.N), sd.N, _Lil1NormalStrength));
         if (_Lil1CustomNormal > 0.5)
         {
-            half4 lilNormalTex = SCSampleRepeat(_Lil1BumpMap, sd.uv * _Lil1BumpMap_ST.xy + _Lil1BumpMap_ST.zw);
+            half4 lilNormalTex = SCSampleRepeat(_Lil1BumpMap, lilMainUV * _Lil1BumpMap_ST.xy + _Lil1BumpMap_ST.zw);
             lilN = normalize(mul(SCUnpackNormal(lilNormalTex, _Lil1BumpScale), vertex.TBN));
         }
         float3 lilView = normalize(lerp(vertex.Head, vertex.V, _Lil1VRParallaxStrength));
@@ -48,7 +49,7 @@ if (_Enable > 0.5 && _LilCompatible > 0.5)
         lilUV = lerp(lilUV, saturate(vertex.uv[1].xy)*2-1, _Lil1BlendUV1.xy);
         lilUV = (lilUV * _Lil1Texture_ST.xy + _Lil1Texture_ST.zw) * 0.5 + 0.5;
         half4 lilCap = _Lil1Texture.SampleLevel(sampler_linear_repeat, lilUV, _Lil1Lod) * _Lil1Color;
-        half3 lilMask = SCSampleRepeat(_Lil1Mask, sd.uv * _Lil1Mask_ST.xy + _Lil1Mask_ST.zw).rgb;
+        half3 lilMask = SCSampleRepeat(_Lil1Mask, lilMainUV * _Lil1Mask_ST.xy + _Lil1Mask_ST.zw).rgb;
         lilCap.rgb *= lerp(1, sd.lightColor, _Lil1EnableLighting);
         lilCap.rgb *= lerp(1, sd.albedoAlpha.rgb, _Lil1MainStrength);
         half3 lilWeight = _Lil1Blend * lilCap.a * lilMask * lerp(1, sd.shadow, _Lil1ShadowMask);

@@ -1,7 +1,7 @@
 SC_float(_Enable, 0, [SCInHeader][SCToggle], "", "")
+SC_float4(_MainUV, (1,1,0,0), [], "Source Main UV Transform", "")
 SC_float(_OutlineCompatible, 0, [SCToggle], "lilToon Outline Width", "")
 SC_Texture2D(_OutlineWidthMask, "white", [], "Outline Width Mask", "")
-SC_ScaleOffset(_OutlineWidthMask)
 SC_float(_OutlineVertexWidth, 0, [], "Vertex Width Mode", "0: None, 1: Red, 2: Alpha")
 SC_float(_OutlineFixWidth, 0, [SCRange(0,1)], "Distance Width Correction", "")
 

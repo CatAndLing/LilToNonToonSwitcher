@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEditor;
 
 namespace NonToonSwitcher
 {
@@ -11,10 +12,27 @@ namespace NonToonSwitcher
         public static bool EnsureInstalled(ConversionLog log)
         {
             var shader = ShaderUtility.FindNonToonShader();
-            if (shader != null && shader.FindPropertyIndex(Prefix + "LilCompatible") >= 0) return true;
+            if (IsCompiled(shader)) return true;
             if (!ModuleInstaller.EnsureModule(ModuleId, "lilToon 材质兼容模块", log)) return false;
             shader = ShaderUtility.FindNonToonShader();
-            return shader != null && shader.FindPropertyIndex(Prefix + "LilCompatible") >= 0;
+            if (IsCompiled(shader)) return true;
+            // The registry can already contain an older version of this module.
+            // Its token check alone does not prove newly added properties were generated.
+            if (shader == null) return false;
+            var path = AssetDatabase.GetAssetPath(shader);
+            if (string.IsNullOrEmpty(path)) return false;
+            try { ModuleInstaller.RegenerateShader(path); }
+            catch (System.Exception error)
+            {
+                if (log != null) log.Error("重新生成材质兼容模块失败：" + error.Message);
+                return false;
+            }
+            return IsCompiled(ShaderUtility.FindNonToonShader());
+        }
+
+        private static bool IsCompiled(Shader shader)
+        {
+            return shader != null && shader.FindPropertyIndex(Prefix + "MainUV") >= 0;
         }
 
         public static bool HasOutlineCompatibility(Material target)
@@ -28,6 +46,7 @@ namespace NonToonSwitcher
             if (source == null || target == null || !target.HasProperty(Prefix + "LilCompatible")) return;
             target.SetFloat(Prefix + "Enable", 1f);
             target.SetFloat(Prefix + "LilCompatible", 1f);
+            CopyMainUV(source, target);
             for (int layer = 0; layer < 2; layer++)
             {
                 string from = layer == 0 ? "_MatCap" : "_MatCap2nd";
@@ -62,7 +81,9 @@ namespace NonToonSwitcher
         {
             if (source == null || target == null || !target.HasProperty(Prefix + "OutlineCompatible")) return;
             target.SetFloat(Prefix + "OutlineCompatible", 1f);
-            CopyTexture(source, target, "_OutlineWidthMask", Prefix + "OutlineWidthMask");
+            CopyMainUV(source, target);
+            if (source.HasProperty("_OutlineWidthMask"))
+                target.SetTexture(Prefix + "OutlineWidthMask", source.GetTexture("_OutlineWidthMask"));
             target.SetFloat(Prefix + "OutlineVertexWidth", source.HasProperty("_OutlineVertexR2Width")
                 ? source.GetFloat("_OutlineVertexR2Width") : 0f);
             target.SetFloat(Prefix + "OutlineFixWidth", source.HasProperty("_OutlineFixWidth")
@@ -74,6 +95,14 @@ namespace NonToonSwitcher
             ShaderUtility.SetIntPersistent(target, "_OutlineFromVertexColor", vertexMode == 2 ? 1 : 0);
             target.SetInteger("_OutlineFromVertexColor", vertexMode == 2 ? 1 : 0);
             log.Mapped("描边宽度遮罩与顶点宽度模式", "直接采样源遮罩，单位化外扩方向");
+        }
+
+        private static void CopyMainUV(Material source, Material target)
+        {
+            if (!source.HasProperty("_MainTex")) return;
+            var scale = source.GetTextureScale("_MainTex");
+            var offset = source.GetTextureOffset("_MainTex");
+            target.SetVector(Prefix + "MainUV", new Vector4(scale.x, scale.y, offset.x, offset.y));
         }
 
         private static void CopyTexture(Material source, Material target, string from, string to)
