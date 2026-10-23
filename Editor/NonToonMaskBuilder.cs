@@ -72,6 +72,11 @@ namespace NonToonSwitcher
             };
 
 
+            // Compatible MatCaps sample their independent RGB masks directly.
+            if (nonToonMaterial.HasProperty(NonToonSurfaceCompatibility.Prefix + "LilCompatible") &&
+                nonToonMaterial.GetFloat(NonToonSurfaceCompatibility.Prefix + "LilCompatible") > 0.5f)
+                sources.RemoveAll(s => s.LilToonProperty.StartsWith("_MatCap", StringComparison.Ordinal));
+
             // 注意：**不能在这里检查文件是否存在**。发射贴图是本次 Bake 后面才写出来的，
             // 首次转换时文件还不存在 ⇒ 会被误判为"没有自发光" ⇒ 把 R/G/B 清成 0（实测：
             // 脸部遮罩 RGB 峰值变成 0，无光照下眼睛完全不亮）。真正的判据是下面自发光块里

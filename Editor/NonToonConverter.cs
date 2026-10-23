@@ -189,6 +189,11 @@ namespace NonToonSwitcher
             string assetPath = null, float outlineScale = 1f)
         {
             var folderLocks = locks as FolderLocks;
+            if (!NonToonSurfaceCompatibility.EnsureInstalled(log))
+            {
+                log.Error("无法安装 lilToon 材质兼容模块，请检查 NonToon Modules 与 Shader Core 的导入错误。");
+                return null;
+            }
             var shader = ShaderUtility.FindNonToonShader();
             if (shader == null)
             {
@@ -227,6 +232,7 @@ namespace NonToonSwitcher
             ApplyRenderingMode(source, target, log);
             ApplyVertexColorFlags(source, target, log);
             ApplyOutlineWidth(source, target, outlineScale, log);
+            NonToonSurfaceCompatibility.ApplyOutline(source, target, log);
             ApplyOutlineWidthMaskWorkaround(source, target, log);
 
             // Integer properties do not survive a plain SetInt on Shader Core shaders, so they are written
@@ -492,6 +498,7 @@ namespace NonToonSwitcher
                     handled.Add(name);
                 }
             }
+            NonToonSurfaceCompatibility.ApplyMatCaps(source, target, log);
         }
 
         private static bool IsTouchedByMap(string propertyName)
@@ -774,6 +781,7 @@ namespace NonToonSwitcher
         private static void ApplyOutlineWidthMaskWorkaround(Material source, Material target, ConversionLog log)
         {
             if (target == null) return;
+            if (NonToonSurfaceCompatibility.HasOutlineCompatibility(target)) return;
             if (!ShaderUtility.HasProperty(target, "_OutlineZOffset")) return;
             if (!ShaderUtility.HasProperty(target, "_OutlineWidth")) return;
             if (!UsesOutlineWidthMask(source)) return;
@@ -823,7 +831,8 @@ namespace NonToonSwitcher
                 if ((bits & 0x02) != 0) flag = 2;
             }
 
-            if (flag != 0) ShaderUtility.SetIntValue(target, "_OutlineFromVertexColor", 1);
+            // Mode 1 scales width by red; only mode 2 encodes the normal in RGB.
+            ShaderUtility.SetIntPersistent(target, "_OutlineFromVertexColor", flag == 2 ? 1 : 0);
         }
 
         // ------------------------------------------------------------------ the whole flow
