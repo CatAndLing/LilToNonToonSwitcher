@@ -848,6 +848,14 @@ namespace NonToonSwitcher
                 return result;
             }
 
+            // Shader generation imports assets and must finish before StartAssetEditing.
+            var compatibilityLog = new ConversionLog();
+            if (!NonToonSurfaceCompatibility.EnsureInstalled(compatibilityLog))
+            {
+                result.Error("无法安装 lilToon 材质兼容模块，请检查 NonToon Modules 与 Shader Core 的导入错误。");
+                return result;
+            }
+
             var shader = ShaderUtility.FindNonToonShader();
             if (shader == null)
             {
@@ -1567,4 +1575,3 @@ namespace NonToonSwitcher
 }
 
 // touch 639266624256169435
-

@@ -10,8 +10,10 @@ namespace NonToonSwitcher
 
         public static bool EnsureInstalled(ConversionLog log)
         {
-            if (!ModuleInstaller.EnsureModule(ModuleId, "lilToon 材质兼容模块", log)) return false;
             var shader = ShaderUtility.FindNonToonShader();
+            if (shader != null && shader.FindPropertyIndex(Prefix + "LilCompatible") >= 0) return true;
+            if (!ModuleInstaller.EnsureModule(ModuleId, "lilToon 材质兼容模块", log)) return false;
+            shader = ShaderUtility.FindNonToonShader();
             return shader != null && shader.FindPropertyIndex(Prefix + "LilCompatible") >= 0;
         }
 

@@ -21,4 +21,3 @@ Tools / LilToNonToon Switcher / 验证 MatCap 与描边
 ~~~text
 python scripts/validate_package.py --root .
 ~~~
-
